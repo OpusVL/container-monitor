@@ -1,0 +1,147 @@
+# Docker Container Monitoring with Icinga2
+
+This script will use the docker API to query the containers on the current host. Any that are listed as NOT "running" will trigger a CRITICAL state report to Icinga2.
+
+Also if docker is not running it will return a CRITICAL result to Icinga2.
+
+## Requirements
+
+Python >=3.7 and Docker.
+
+## Installation
+
+```shell
+sudo pip3 install container-monitor/dist/container_monitor-X.X.X-py3-none-any.whl
+```
+
+or
+
+```shell
+sudo python3 -m pip install container-monitor/dist/container_monitor-X.X.X-py3-none-any.whl
+```
+
+## Usage
+
+```shell
+container_monitor [-f | --config-file]
+```
+
+## Settings Variables
+
+### settings.ini
+
+```ini
+[settings]
+ICINGA2_ENDPOINT=http://icinga2:5665
+ICINGA2_API_USER=apiuser
+ICINGA2_API_PASSWORD=SecretKey
+ICINGA2_REPORTING_HOST=hostname
+ICINGA2_SERVICE=container-monitor
+```
+
+`ICINGA2_REPORTING_HOST` is optional as the program will use the default fqdn of the system - check `hostname -f` and edits `/etc/hosts` as necessary.
+
+## Ignoring a Container
+
+For a container to be ignored it must have a label `com.opusvl.monitor` with the value of `off`. Any other value or if it is missing will assume that it is included in monitoring, eg.
+
+### docker-compose.yml
+
+```yaml
+version: '3.7'
+
+service:
+    myservice:
+        labels:
+            com.opusvl.monitor: "off"
+```
+
+## Icinga2 Config
+
+### /etc/icinga2/conf.d/api-users
+
+```text
+object ApiUser "container-monitor" {
+  password = "SecretKey"
+  permissions = [ "actions/*" ]
+}
+```
+
+### /etc/icinga2/zones.d/myzone/passive-services.conf
+
+```text
+apply Service "container-monitor" {
+  import "generic-service"
+  check_command = "dummy"
+  enable_active_checks = false  
+  check_interval = 5m
+  command_endpoint = host.vars.client_endpoint
+  assign where host.vars.client_passive && "container-monitor" in host.vars.services
+}
+```
+
+### /etc/icinga2/zones.d/myzone/myhost.conf
+
+```text
+object Host "MyHost" {
+    address = "MyHost"
+    check_command = "dummy"
+
+    vars.no_ping = "true"
+    vars.owner = "opusvl"
+    vars.client_passive = "true"
+    vars.services = [ "container-monitor" ]
+
+    vars.notification["mail"] = {
+    groups = [ "icingaadmins" ]
+ }
+}
+```
+
+## Add to systemd
+
+Copy the `systemd` files into `/etc/systemd/system/` and activate the timer using:
+
+```shell
+sudo systemctl daemon-reload
+sudo systemctl enable container_monitor.timer --now
+```
+
+Depending on the version os systemd or otions it uses you may have to add an `ExecStop=` into the `.service` file. For this you will need to install `killall` - it is available in the `psmisc` package:
+
+```shell
+sudo apt install psmisc
+```
+
+Then add in the line:
+
+```ini
+ExecStop=/usr/bin/killall container_monitor
+```
+
+You may also have to modify the `ExecStart=` line to include the full path to the `container_monitor` program - which is probably good practice any way.
+
+```shell
+$ which container_monitor
+/usr/local/bin/container_monitor
+```
+
+```ini
+ExecStart=/usr/local/bin/container_monitor -f /etc/container_monitor.ini
+```
+
+Check the `settings.ini` setting in the service file. I suggest creating it in `/etc/` and chmod'ing to 600 so only root can read the password etc.
+
+List the timers status:
+
+```shell
+$ sudo systemctl list-timers                         
+NEXT                         LEFT          LAST                         PASSED       UNIT                         ACTIVATES
+Thu 2022-01-27 21:20:00 GMT  2min 38s left Thu 2022-01-27 21:15:02 GMT  2min 18s ago container_monitor.timer      container_monitor.service
+Fri 2022-01-28 00:00:00 GMT  2h 42min left Thu 2022-01-27 00:00:01 GMT  21h ago      logrotate.timer              logrotate.service
+Fri 2022-01-28 00:00:00 GMT  2h 42min left Thu 2022-01-27 00:00:01 GMT  21h ago      man-db.timer                 man-db.service
+Fri 2022-01-28 02:17:39 GMT  5h 0min left  Thu 2022-01-27 12:13:56 GMT  9h ago       apt-daily.timer              apt-daily.service
+Fri 2022-01-28 02:36:44 GMT  5h 19min left Thu 2022-01-27 13:36:25 GMT  7h ago       certbot.timer                certbot.service
+Fri 2022-01-28 06:05:56 GMT  8h left       Thu 2022-01-27 06:08:28 GMT  15h ago      apt-daily-upgrade.timer      apt-daily-upgrade.service
+Fri 2022-01-28 20:58:49 GMT  23h left      Thu 2022-01-27 20:58:49 GMT  18min ago    systemd-tmpfiles-clean.timer systemd-tmpfiles-clean.service
+```

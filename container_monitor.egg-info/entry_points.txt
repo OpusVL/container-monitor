@@ -1,0 +1,4 @@
+
+        [console_scripts]
+        container_monitor=container_monitor:main
+    

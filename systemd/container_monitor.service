@@ -1,0 +1,7 @@
+[Unit]
+Description=Docker Container Monitor for Icinga2
+
+[Service]
+Type=oneshot
+ExecStart=container_monitor -f /etc/container_monitor.ini
+PrivateTmp=true
